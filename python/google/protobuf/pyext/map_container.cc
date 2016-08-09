@@ -32,9 +32,13 @@
 
 #include <google/protobuf/pyext/map_container.h>
 
+#include <memory>
+#ifndef _SHARED_PTR_H
+#include <google/protobuf/stubs/shared_ptr.h>
+#endif
+
 #include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/common.h>
-#include <google/protobuf/stubs/scoped_ptr.h>
 #include <google/protobuf/map_field.h>
 #include <google/protobuf/map.h>
 #include <google/protobuf/message.h>
@@ -70,7 +74,7 @@ class MapReflectionFriend {
 struct MapIterator {
   PyObject_HEAD;
 
-  scoped_ptr< ::google::protobuf::MapIterator> iter;
+  google::protobuf::scoped_ptr< ::google::protobuf::MapIterator> iter;
 
   // A pointer back to the container, so we can notice changes to the version.
   // We own a ref on this.
@@ -344,9 +348,10 @@ PyObject* MapReflectionFriend::Contains(PyObject* _self, PyObject* key) {
 }
 
 // Initializes the underlying Message object of "to" so it becomes a new parent
-// repeated scalar, and copies all the values from "from" to it. A child scalar
+// map container, and copies all the values from "from" to it. A child map
 // container can be released by passing it as both from and to (e.g. making it
 // the recipient of the new parent message and copying the values from itself).
+// In fact, this is the only supported use at the moment.
 static int InitializeAndCopyToParentContainer(MapContainer* from,
                                               MapContainer* to) {
   // For now we require from == to, re-evaluate if we want to support deep copy
@@ -610,8 +615,7 @@ static PyObject* GetCMessage(MessageMapContainer* self, Message* message) {
   PyObject* ret = PyDict_GetItem(self->message_dict, key.get());
 
   if (ret == NULL) {
-    CMessage* cmsg = cmessage::NewEmptyMessage(self->subclass_init,
-                                               message->GetDescriptor());
+    CMessage* cmsg = cmessage::NewEmptyMessage(self->message_class);
     ret = reinterpret_cast<PyObject*>(cmsg);
 
     if (cmsg == NULL) {
@@ -634,7 +638,7 @@ static PyObject* GetCMessage(MessageMapContainer* self, Message* message) {
 
 PyObject* NewMessageMapContainer(
     CMessage* parent, const google::protobuf::FieldDescriptor* parent_field_descriptor,
-    PyObject* concrete_class) {
+    CMessageClass* message_class) {
   if (!CheckFieldBelongsToMessage(parent_field_descriptor, parent->message)) {
     return NULL;
   }
@@ -669,8 +673,8 @@ PyObject* NewMessageMapContainer(
                         "Could not allocate message dict.");
   }
 
-  Py_INCREF(concrete_class);
-  self->subclass_init = concrete_class;
+  Py_INCREF(message_class);
+  self->message_class = message_class;
 
   if (self->key_field_descriptor == NULL ||
       self->value_field_descriptor == NULL) {
@@ -763,6 +767,7 @@ static void MessageMapDealloc(PyObject* _self) {
   MessageMapContainer* self = GetMessageMap(_self);
   self->owner.reset();
   Py_DECREF(self->message_dict);
+  Py_DECREF(self->message_class);
   Py_TYPE(_self)->tp_free(_self);
 }
 

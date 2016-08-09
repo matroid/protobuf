@@ -26,7 +26,7 @@ def _CcOuts(srcs, use_grpc_plugin=False):
 def _PyOuts(srcs):
   return [s[:-len(".proto")] + "_pb2.py" for s in srcs]
 
-def _RelativeOutputPath(path, include):
+def _RelativeOutputPath(path, include, dest=""):
   if include == None:
     return path
 
@@ -35,16 +35,11 @@ def _RelativeOutputPath(path, include):
 
   if include and include[-1] != '/':
     include = include + '/'
+  if dest and dest[-1] != '/':
+    dest = dest + '/'
 
   path = path[len(include):]
-
-  if not path.startswith(PACKAGE_NAME):
-    fail("The package %s is not within the path %s" % (PACKAGE_NAME, path))
-
-  if not PACKAGE_NAME:
-    return path
-
-  return path[len(PACKAGE_NAME)+1:]
+  return dest + path
 
 def _proto_gen_impl(ctx):
   """General implementation for generating protos"""
@@ -53,7 +48,7 @@ def _proto_gen_impl(ctx):
   deps += ctx.files.srcs
   gen_dir = _GenDir(ctx)
   if gen_dir:
-    import_flags = ["-I" + gen_dir]
+    import_flags = ["-I" + gen_dir, "-I" + ctx.var["GENDIR"] + "/" + gen_dir]
   else:
     import_flags = ["-I."]
 
@@ -117,10 +112,10 @@ def cc_proto_library(
         deps=[],
         cc_libs=[],
         include=None,
-        protoc="//google/protobuf:protoc",
+        protoc="//:protoc",
         internal_bootstrap_hack=False,
         use_grpc_plugin=False,
-        default_runtime="//google/protobuf:protobuf",
+        default_runtime="//:protobuf",
         **kargs):
   """Bazel rule to create a C++ protobuf library from proto source files
 
@@ -199,34 +194,60 @@ def cc_proto_library(
       includes=includes,
       **kargs)
 
-def internal_copied_filegroup(
-        name,
-        srcs,
-        include,
-        **kargs):
-  """Bazel rule to fix sources file to workaround with python path issues.
+
+def internal_gen_well_known_protos_java(srcs):
+  """Bazel rule to generate the gen_well_known_protos_java genrule
 
   Args:
-    name: the name of the internal_copied_filegroup rule, which will be the
-        name of the generated filegroup.
-    srcs: the source files to be copied.
-    include: the expected import root of the source.
-    **kargs: extra arguments that will be passed into the filegroup.
+    srcs: the well known protos
   """
-  outs = [_RelativeOutputPath(s, include) for s in srcs]
+  root = Label("%s//protobuf_java" % (REPOSITORY_NAME)).workspace_root
+  if root == "":
+    include = " -Isrc "
+  else:
+    include = " -I%s/src " % root
+  native.genrule(
+    name = "gen_well_known_protos_java",
+    srcs = srcs,
+    outs = [
+        "wellknown.srcjar",
+    ],
+    cmd = "$(location :protoc) --java_out=$(@D)/wellknown.jar" +
+          " %s $(SRCS) " % include +
+          " && mv $(@D)/wellknown.jar $(@D)/wellknown.srcjar",
+    tools = [":protoc"],
+  )
+
+
+def internal_copied_filegroup(name, srcs, strip_prefix, dest, **kwargs):
+  """Macro to copy files to a different directory and then create a filegroup.
+
+  This is used by the //:protobuf_python py_proto_library target to work around
+  an issue caused by Python source files that are part of the same Python
+  package being in separate directories.
+
+  Args:
+    srcs: The source files to copy and add to the filegroup.
+    strip_prefix: Path to the root of the files to copy.
+    dest: The directory to copy the source files into.
+    **kwargs: extra arguments that will be passesd to the filegroup.
+  """
+  outs = [_RelativeOutputPath(s, strip_prefix, dest) for s in srcs]
 
   native.genrule(
-      name=name+"_genrule",
-      srcs=srcs,
-      outs=outs,
-      cmd=" && ".join(["cp $(location %s) $(location %s)" %
-                       (s, _RelativeOutputPath(s, include))
-                       for s in srcs]))
+      name = name + "_genrule",
+      srcs = srcs,
+      outs = outs,
+      cmd = " && ".join(
+          ["cp $(location %s) $(location %s)" %
+           (s, _RelativeOutputPath(s, strip_prefix, dest)) for s in srcs]),
+  )
 
   native.filegroup(
-      name=name,
-      srcs=outs,
-      **kargs)
+      name = name,
+      srcs = outs,
+      **kwargs)
+
 
 def py_proto_library(
         name,
@@ -235,8 +256,8 @@ def py_proto_library(
         py_libs=[],
         py_extra_srcs=[],
         include=None,
-        default_runtime="//google/protobuf:protobuf_python",
-        protoc="//google/protobuf:protoc",
+        default_runtime="//:protobuf_python",
+        protoc="//:protoc",
         **kargs):
   """Bazel rule to create a Python protobuf library from proto source files
 
@@ -276,15 +297,6 @@ def py_proto_library(
       visibility=["//visibility:public"],
   )
 
-  if include != None:
-    # Copy the output files to the desired location to make the import work.
-    internal_copied_filegroup_name=name + "_internal_copied_filegroup"
-    internal_copied_filegroup(
-        name=internal_copied_filegroup_name,
-        srcs=outs,
-        include=include)
-    outs=[internal_copied_filegroup_name]
-
   if default_runtime and not default_runtime in py_libs + deps:
     py_libs += [default_runtime]
 
@@ -292,6 +304,7 @@ def py_proto_library(
       name=name,
       srcs=outs+py_extra_srcs,
       deps=py_libs+deps,
+      imports=includes,
       **kargs)
 
 def internal_protobuf_py_tests(
@@ -308,8 +321,7 @@ def internal_protobuf_py_tests(
 
   """
   for m in modules:
-    s = _RelativeOutputPath(
-        "python/google/protobuf/internal/%s.py" % m, "python")
+    s = "python/google/protobuf/internal/%s.py" % m
     native.py_test(
         name="py_%s" % m,
         srcs=[s],

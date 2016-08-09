@@ -30,6 +30,7 @@
 
 #include <stdarg.h>
 #include <string>
+#include <fstream>
 
 #include "conformance.pb.h"
 #include "conformance_test.h"
@@ -575,24 +576,41 @@ void ConformanceTestSuite::TestPrematureEOFForType(FieldDescriptor::Type type) {
   }
 }
 
-void ConformanceTestSuite::SetFailureList(const vector<string>& failure_list) {
+void ConformanceTestSuite::SetFailureList(const string& filename,
+                                          const vector<string>& failure_list) {
+  failure_list_filename_ = filename;
   expected_to_fail_.clear();
   std::copy(failure_list.begin(), failure_list.end(),
             std::inserter(expected_to_fail_, expected_to_fail_.end()));
 }
 
 bool ConformanceTestSuite::CheckSetEmpty(const set<string>& set_to_check,
-                                         const char* msg) {
+                                         const std::string& write_to_file,
+                                         const std::string& msg) {
   if (set_to_check.empty()) {
     return true;
   } else {
     StringAppendF(&output_, "\n");
-    StringAppendF(&output_, "%s:\n", msg);
+    StringAppendF(&output_, "%s\n\n", msg.c_str());
     for (set<string>::const_iterator iter = set_to_check.begin();
          iter != set_to_check.end(); ++iter) {
       StringAppendF(&output_, "  %s\n", iter->c_str());
     }
     StringAppendF(&output_, "\n");
+
+    if (!write_to_file.empty()) {
+      std::ofstream os(write_to_file);
+      if (os) {
+        for (set<string>::const_iterator iter = set_to_check.begin();
+             iter != set_to_check.end(); ++iter) {
+          os << *iter << "\n";
+        }
+      } else {
+        StringAppendF(&output_, "Failed to open file: %s\n",
+                      write_to_file.c_str());
+      }
+    }
+
     return false;
   }
 }
@@ -796,18 +814,26 @@ bool ConformanceTestSuite::RunSuite(ConformanceTestRunner* runner,
       "Uint64FieldMaxValue",
       R"({"optionalUint64": "18446744073709551615"})",
       "optional_uint64: 18446744073709551615");
+  // While not the largest Int64, this is the largest
+  // Int64 which can be exactly represented within an
+  // IEEE-754 64-bit float, which is the expected level
+  // of interoperability guarantee. Larger values may
+  // work in some implementations, but should not be
+  // relied upon.
   RunValidJsonTest(
       "Int64FieldMaxValueNotQuoted",
-      R"({"optionalInt64": 9223372036854775807})",
-      "optional_int64: 9223372036854775807");
+      R"({"optionalInt64": 9223372036854774784})",
+      "optional_int64: 9223372036854774784");
   RunValidJsonTest(
       "Int64FieldMinValueNotQuoted",
       R"({"optionalInt64": -9223372036854775808})",
       "optional_int64: -9223372036854775808");
+  // Largest interoperable Uint64; see comment above
+  // for Int64FieldMaxValueNotQuoted.
   RunValidJsonTest(
       "Uint64FieldMaxValueNotQuoted",
-      R"({"optionalUint64": 18446744073709551615})",
-      "optional_uint64: 18446744073709551615");
+      R"({"optionalUint64": 18446744073709549568})",
+      "optional_uint64: 18446744073709549568");
   // Values can be represented as JSON strings.
   RunValidJsonTest(
       "Int32FieldStringValue",
@@ -1965,27 +1991,34 @@ bool ConformanceTestSuite::RunSuite(ConformanceTestRunner* runner,
       )");
 
   bool ok = true;
-  if (!CheckSetEmpty(expected_to_fail_,
+  if (!CheckSetEmpty(expected_to_fail_, "nonexistent_tests.txt",
                      "These tests were listed in the failure list, but they "
-                     "don't exist.  Remove them from the failure list")) {
+                     "don't exist.  Remove them from the failure list by "
+                     "running:\n"
+                     "  ./update_failure_list.py " + failure_list_filename_ +
+                     " --remove nonexistent_tests.txt")) {
     ok = false;
   }
-  if (!CheckSetEmpty(unexpected_failing_tests_,
+  if (!CheckSetEmpty(unexpected_failing_tests_, "failing_tests.txt",
                      "These tests failed.  If they can't be fixed right now, "
                      "you can add them to the failure list so the overall "
-                     "suite can succeed")) {
+                     "suite can succeed.  Add them to the failure list by "
+                     "running:\n"
+                     "  ./update_failure_list.py " + failure_list_filename_ +
+                     " --add failing_tests.txt")) {
+    ok = false;
+  }
+  if (!CheckSetEmpty(unexpected_succeeding_tests_, "succeeding_tests.txt",
+                     "These tests succeeded, even though they were listed in "
+                     "the failure list.  Remove them from the failure list "
+                     "by running:\n"
+                     "  ./update_failure_list.py " + failure_list_filename_ +
+                     " --remove succeeding_tests.txt")) {
     ok = false;
   }
 
-  // Sometimes the testee may be fixed before we update the failure list (e.g.,
-  // the testee is from a different component). We warn about this case but
-  // don't consider it an overall test failure.
-  CheckSetEmpty(unexpected_succeeding_tests_,
-                "These tests succeeded, even though they were listed in "
-                "the failure list.  Remove them from the failure list");
-
   if (verbose_) {
-    CheckSetEmpty(skipped_,
+    CheckSetEmpty(skipped_, "",
                   "These tests were skipped (probably because support for some "
                   "features is not implemented)");
   }

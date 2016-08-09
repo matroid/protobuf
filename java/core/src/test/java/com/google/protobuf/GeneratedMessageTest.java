@@ -620,6 +620,21 @@ public class GeneratedMessageTest extends TestCase {
     TestUtil.assertExtensionsClear(TestAllExtensions.newBuilder().build());
   }
 
+  public void testUnsetRepeatedExtensionGetField() {
+    TestAllExtensions message = TestAllExtensions.getDefaultInstance();
+    Object value;
+
+    value = message.getField(UnittestProto.repeatedStringExtension.getDescriptor());
+    assertTrue(value instanceof List);
+    assertTrue(((List<?>) value).isEmpty());
+    assertIsUnmodifiable((List<?>) value);
+
+    value = message.getField(UnittestProto.repeatedNestedMessageExtension.getDescriptor());
+    assertTrue(value instanceof List);
+    assertTrue(((List<?>) value).isEmpty());
+    assertIsUnmodifiable((List<?>) value);
+  }
+
   public void testExtensionReflectionGetters() throws Exception {
     TestAllExtensions.Builder builder = TestAllExtensions.newBuilder();
     TestUtil.setAllExtensions(builder);
@@ -708,7 +723,7 @@ public class GeneratedMessageTest extends TestCase {
 
   public void testLiteExtensionMessageOrBuilder() throws Exception {
     TestAllExtensionsLite.Builder builder = TestAllExtensionsLite.newBuilder();
-    TestUtil.setAllExtensions(builder);
+    TestUtilLite.setAllExtensions(builder);
     TestUtil.assertAllExtensionsSet(builder);
 
     TestAllExtensionsLite message = builder.build();
@@ -717,8 +732,8 @@ public class GeneratedMessageTest extends TestCase {
 
   public void testLiteExtensionRepeatedSetters() throws Exception {
     TestAllExtensionsLite.Builder builder = TestAllExtensionsLite.newBuilder();
-    TestUtil.setAllExtensions(builder);
-    TestUtil.modifyRepeatedExtensions(builder);
+    TestUtilLite.setAllExtensions(builder);
+    TestUtilLite.modifyRepeatedExtensions(builder);
     TestUtil.assertRepeatedExtensionsModified(builder);
 
     TestAllExtensionsLite message = builder.build();
@@ -745,7 +760,7 @@ public class GeneratedMessageTest extends TestCase {
   }
 
   public void testLiteExtensionCopy() throws Exception {
-    TestAllExtensionsLite original = TestUtil.getAllLiteExtensionsSet();
+    TestAllExtensionsLite original = TestUtilLite.getAllLiteExtensionsSet();
     TestAllExtensionsLite copy =
         TestAllExtensionsLite.newBuilder(original).build();
     TestUtil.assertAllExtensionsSet(copy);
@@ -957,7 +972,7 @@ public class GeneratedMessageTest extends TestCase {
     TestUtil.MockBuilderParent mockParent = new TestUtil.MockBuilderParent();
 
     TestAllTypes.Builder builder = (TestAllTypes.Builder)
-        ((GeneratedMessage) TestAllTypes.getDefaultInstance()).
+        ((AbstractMessage) TestAllTypes.getDefaultInstance()).
             newBuilderForType(mockParent);
     builder.setOptionalInt32(1);
     builder.setOptionalNestedEnum(TestAllTypes.NestedEnum.BAR);
@@ -1012,7 +1027,7 @@ public class GeneratedMessageTest extends TestCase {
     TestUtil.MockBuilderParent mockParent = new TestUtil.MockBuilderParent();
 
     TestAllExtensions.Builder builder = (TestAllExtensions.Builder)
-        ((GeneratedMessage) TestAllExtensions.getDefaultInstance()).
+        ((AbstractMessage) TestAllExtensions.getDefaultInstance()).
             newBuilderForType(mockParent);
 
     builder.addExtension(UnittestProto.repeatedInt32Extension, 1);

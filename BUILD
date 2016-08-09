@@ -2,6 +2,8 @@
 
 licenses(["notice"])
 
+exports_files(["LICENSE"])
+
 ################################################################################
 # Protobuf Runtime Library
 ################################################################################
@@ -15,16 +17,58 @@ COPTS = [
     "-Wno-error=unused-function",
 ]
 
-# Bazel should provide portable link_opts for pthread.
-LINK_OPTS = ["-lpthread"]
+config_setting(
+    name = "android",
+    values = {
+        "crosstool_top": "//external:android/crosstool",
+    },
+)
+
+# Android builds do not need to link in a separate pthread library.
+LINK_OPTS = select({
+    ":android": [],
+    "//conditions:default": ["-lpthread"],
+})
 
 load(
     "protobuf",
     "cc_proto_library",
     "py_proto_library",
     "internal_copied_filegroup",
+    "internal_gen_well_known_protos_java",
     "internal_protobuf_py_tests",
 )
+
+config_setting(
+    name = "ios_armv7",
+    values = {
+        "ios_cpu": "armv7",
+    },
+)
+
+config_setting(
+    name = "ios_armv7s",
+    values = {
+        "ios_cpu": "armv7s",
+    },
+)
+
+config_setting(
+    name = "ios_arm64",
+    values = {
+        "ios_cpu": "arm64",
+    },
+)
+
+IOS_ARM_COPTS = COPTS + [
+    "-DOS_IOS",
+    "-miphoneos-version-min=7.0",
+    "-arch armv7",
+    "-arch armv7s",
+    "-arch arm64",
+    "-D__thread=",
+    "-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS9.2.sdk/",
+]
 
 cc_library(
     name = "protobuf_lite",
@@ -55,7 +99,12 @@ cc_library(
         "src/google/protobuf/wire_format_lite.cc",
     ],
     hdrs = glob(["src/google/protobuf/**/*.h"]),
-    copts = COPTS,
+    copts = select({
+        ":ios_armv7": IOS_ARM_COPTS,
+        ":ios_armv7s": IOS_ARM_COPTS,
+        ":ios_arm64": IOS_ARM_COPTS,
+        "//conditions:default": COPTS,
+    }),
     includes = ["src/"],
     linkopts = LINK_OPTS,
     visibility = ["//visibility:public"],
@@ -120,7 +169,12 @@ cc_library(
         "src/google/protobuf/wrappers.pb.cc",
     ],
     hdrs = glob(["src/**/*.h"]),
-    copts = COPTS,
+    copts = select({
+        ":ios_armv7": IOS_ARM_COPTS,
+        ":ios_armv7s": IOS_ARM_COPTS,
+        ":ios_arm64": IOS_ARM_COPTS,
+        "//conditions:default": COPTS,
+    }),
     includes = ["src/"],
     linkopts = LINK_OPTS,
     visibility = ["//visibility:public"],
@@ -152,6 +206,12 @@ RELATIVE_WELL_KNOWN_PROTOS = [
 ]
 
 WELL_KNOWN_PROTOS = ["src/" + s for s in RELATIVE_WELL_KNOWN_PROTOS]
+
+filegroup(
+    name = "well_known_protos",
+    srcs = WELL_KNOWN_PROTOS,
+    visibility = ["//visibility:public"],
+)
 
 cc_proto_library(
     name = "cc_wkt_protos",
@@ -209,6 +269,7 @@ cc_library(
         "src/google/protobuf/compiler/java/java_enum_field_lite.cc",
         "src/google/protobuf/compiler/java/java_enum_lite.cc",
         "src/google/protobuf/compiler/java/java_extension.cc",
+        "src/google/protobuf/compiler/java/java_extension_lite.cc",
         "src/google/protobuf/compiler/java/java_field.cc",
         "src/google/protobuf/compiler/java/java_file.cc",
         "src/google/protobuf/compiler/java/java_generator.cc",
@@ -319,6 +380,8 @@ RELATIVE_TEST_PROTOS = [
     "google/protobuf/unittest_preserve_unknown_enum.proto",
     "google/protobuf/unittest_preserve_unknown_enum2.proto",
     "google/protobuf/unittest_proto3_arena.proto",
+    "google/protobuf/unittest_proto3_arena_lite.proto",
+    "google/protobuf/unittest_proto3_lite.proto",
     "google/protobuf/unittest_well_known_types.proto",
     "google/protobuf/util/internal/testdata/anys.proto",
     "google/protobuf/util/internal/testdata/books.proto",
@@ -379,6 +442,7 @@ cc_test(
         "src/google/protobuf/compiler/cpp/cpp_bootstrap_unittest.cc",
         "src/google/protobuf/compiler/cpp/cpp_plugin_unittest.cc",
         "src/google/protobuf/compiler/cpp/cpp_unittest.cc",
+        "src/google/protobuf/compiler/cpp/metadata_test.cc",
         "src/google/protobuf/compiler/csharp/csharp_generator_unittest.cc",
         "src/google/protobuf/compiler/importer_unittest.cc",
         "src/google/protobuf/compiler/java/java_doc_comment_unittest.cc",
@@ -403,7 +467,9 @@ cc_test(
         "src/google/protobuf/message_unittest.cc",
         "src/google/protobuf/no_field_presence_test.cc",
         "src/google/protobuf/preserve_unknown_enum_test.cc",
+        "src/google/protobuf/proto3_arena_lite_unittest.cc",
         "src/google/protobuf/proto3_arena_unittest.cc",
+        "src/google/protobuf/proto3_lite_unittest.cc",
         "src/google/protobuf/reflection_ops_unittest.cc",
         "src/google/protobuf/repeated_field_reflection_unittest.cc",
         "src/google/protobuf/repeated_field_unittest.cc",
@@ -458,16 +524,8 @@ cc_test(
 ################################################################################
 # Java support
 ################################################################################
-genrule(
-    name = "gen_well_known_protos_java",
+internal_gen_well_known_protos_java(
     srcs = WELL_KNOWN_PROTOS,
-    outs = [
-        "wellknown.srcjar",
-    ],
-    cmd = "$(location :protoc) --java_out=$(@D)/wellknown.jar" +
-          " -Isrc $(SRCS) " +
-          " && mv $(@D)/wellknown.jar $(@D)/wellknown.srcjar",
-    tools = [":protoc"],
 )
 
 java_library(
@@ -480,29 +538,24 @@ java_library(
     visibility = ["//visibility:public"],
 )
 
+java_library(
+    name = "protobuf_java_util",
+    srcs = glob([
+        "java/util/src/main/java/com/google/protobuf/util/*.java",
+    ]),
+    deps = [
+        "protobuf_java",
+        "//external:gson",
+        "//external:guava",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 ################################################################################
 # Python support
 ################################################################################
 
-# Hack:
-# protoc generated files contain imports like:
-#   "from google.protobuf.xxx import yyy"
-# However, the sources files of the python runtime are not directly under
-# "google/protobuf" (they are under python/google/protobuf).  We workaround
-# this by copying runtime source files into the desired location to workaround
-# the import issue. Ideally py_library should support something similiar to the
-# "include" attribute in cc_library to inject the PYTHON_PATH for all libraries
-# that depend on the target.
-#
-# If you use python protobuf as a third_party library in your bazel managed
-# project:
-# 1) Please import the whole package to //google/protobuf in your
-# project. Otherwise, bazel disallows generated files out of the current
-# package, thus we won't be able to copy protobuf runtime files into
-# //google/protobuf/.
-# 2) The runtime also requires "six" for Python2/3 compatibility, please see the
-# WORKSPACE file and bind "six" to your workspace as well.
-internal_copied_filegroup(
+py_library(
     name = "python_srcs",
     srcs = glob(
         [
@@ -510,11 +563,14 @@ internal_copied_filegroup(
             "python/google/protobuf/**/*.py",
         ],
         exclude = [
+            "python/google/protobuf/__init__.py",
+            "python/google/protobuf/**/__init__.py",
             "python/google/protobuf/internal/*_test.py",
             "python/google/protobuf/internal/test_util.py",
         ],
     ),
-    include = "python",
+    srcs_version = "PY2AND3",
+    imports = ["python"],
 )
 
 cc_binary(
@@ -527,7 +583,7 @@ cc_binary(
     linkstatic = 1,
     deps = select({
         "//conditions:default": [],
-        ":use_fast_cpp_protos": ["//util/python:python_headers"],
+        ":use_fast_cpp_protos": ["//external:python_headers"],
     }),
 )
 
@@ -553,7 +609,7 @@ cc_binary(
         ":protobuf",
     ] + select({
         "//conditions:default": [],
-        ":use_fast_cpp_protos": ["//util/python:python_headers"],
+        ":use_fast_cpp_protos": ["//external:python_headers"],
     }),
 )
 
@@ -571,10 +627,26 @@ config_setting(
     },
 )
 
+# Copy the builtin proto files from src/google/protobuf to
+# python/google/protobuf. This way, the generated Python sources will be in the
+# same directory as the Python runtime sources. This is necessary for the
+# modules to be imported correctly since they are all part of the same Python
+# package.
+internal_copied_filegroup(
+    name = "protos_python",
+    srcs = WELL_KNOWN_PROTOS,
+    strip_prefix = "src",
+    dest = "python",
+)
+
+# TODO(dzc): Remove this once py_proto_library can have labels in srcs, in
+# which case we can simply add :protos_python in srcs.
+COPIED_WELL_KNOWN_PROTOS = ["python/" + s for s in RELATIVE_WELL_KNOWN_PROTOS]
+
 py_proto_library(
     name = "protobuf_python",
-    srcs = WELL_KNOWN_PROTOS,
-    include = "src",
+    srcs = COPIED_WELL_KNOWN_PROTOS,
+    include = "python",
     data = select({
         "//conditions:default": [],
         ":use_fast_cpp_protos": [
@@ -584,29 +656,38 @@ py_proto_library(
     }),
     default_runtime = "",
     protoc = ":protoc",
-    py_extra_srcs = [":python_srcs"],
-    py_libs = ["//external:six"],
+    py_libs = [
+        ":python_srcs",
+        "//external:six"
+    ],
     srcs_version = "PY2AND3",
     visibility = ["//visibility:public"],
 )
 
+# Copy the test proto files from src/google/protobuf to
+# python/google/protobuf. This way, the generated Python sources will be in the
+# same directory as the Python runtime sources. This is necessary for the
+# modules to be imported correctly by the tests since they are all part of the
+# same Python package.
 internal_copied_filegroup(
-    name = "python_test_srcs",
-    srcs = glob(
-        [
-            "python/google/protobuf/internal/*_test.py",
-            "python/google/protobuf/internal/test_util.py",
-        ],
-    ),
-    include = "python",
+    name = "protos_python_test",
+    srcs = LITE_TEST_PROTOS + TEST_PROTOS,
+    strip_prefix = "src",
+    dest = "python",
 )
+
+# TODO(dzc): Remove this once py_proto_library can have labels in srcs, in
+# which case we can simply add :protos_python_test in srcs.
+COPIED_LITE_TEST_PROTOS = ["python/" + s for s in RELATIVE_LITE_TEST_PROTOS]
+COPIED_TEST_PROTOS = ["python/" + s for s in RELATIVE_TEST_PROTOS]
 
 py_proto_library(
     name = "python_common_test_protos",
-    srcs = LITE_TEST_PROTOS + TEST_PROTOS,
-    include = "src",
+    srcs = COPIED_LITE_TEST_PROTOS + COPIED_TEST_PROTOS,
+    include = "python",
     default_runtime = "",
     protoc = ":protoc",
+    srcs_version = "PY2AND3",
     deps = [":protobuf_python"],
 )
 
@@ -619,12 +700,20 @@ py_proto_library(
     include = "python",
     default_runtime = ":protobuf_python",
     protoc = ":protoc",
+    srcs_version = "PY2AND3",
     deps = [":python_common_test_protos"],
 )
 
 py_library(
     name = "python_tests",
-    srcs = [":python_test_srcs"],
+    srcs = glob(
+        [
+            "python/google/protobuf/internal/*_test.py",
+            "python/google/protobuf/internal/test_util.py",
+            "python/google/protobuf/internal/import_test_package/__init__.py",
+        ],
+    ),
+    imports = ["python"],
     srcs_version = "PY2AND3",
     deps = [
         ":protobuf_python",
